@@ -5,319 +5,373 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
-#include <regex>
+#include <functional>
+#include <optional>
+#include <type_traits>
+#include <utility>
+#include <vector>
+#include <algorithm>
 
 namespace mx
 {
 
-template <typename HandlerT>
+template <typename T>
 class router
 {
 public:
-    using handler = HandlerT;
-
-    struct segment
-    {
-        enum class type { literal, parameter, wildcard };
-        type type;
-        std::string text;
-        std::string param;
-        std::string regex;
-
-        segment();
-        explicit segment(std::string_view text);
-        segment(const char* data, std::size_t size);
-    };
+    using value_t = T;
+    using on_path_param_t = std::function<void(std::string_view, std::string_view)>;
 
 private:
-    struct node
+    enum class mode { add, get, mount, unmount };
+
+    struct node : std::enable_shared_from_this<node>
     {
-        segment seg;
-        std::unordered_map<std::string, handler> handlers{};
-        std::unordered_map<std::string, std::shared_ptr<node>> children;
+        std::optional<value_t> _value;
 
-        node() = default;
-        explicit node(std::string_view text) : seg(text) {}
+        std::weak_ptr<node> _parent;
+        std::unordered_map<std::string, std::shared_ptr<node>> _children;
 
-        bool add(std::string_view method, std::string_view path, const handler& h);
-        bool remove(std::string_view method, std::string_view path);
-    
-        template <typename OnPathParamT = void(*)(std::string_view, std::string_view)>
-        handler route(std::string_view method, std::string_view path, const OnPathParamT& on_path_param = [](std::string_view, std::string_view){});
+        explicit node(std::weak_ptr<node> parent = {});
 
-        bool contains(std::string_view method, std::string_view path) const;
+        std::shared_ptr<node> insert(std::string_view path);
 
-        bool mount(std::string_view path, router r);
-        router unmount(std::string_view path);
+        std::shared_ptr<node> find(std::string_view path, const on_path_param_t& on_path_param);
+        std::shared_ptr<const node> find(std::string_view path, const on_path_param_t& on_path_param) const;
+
+        std::shared_ptr<node> insert(std::string_view path, std::shared_ptr<node> other);
+        std::shared_ptr<node> remove(std::string_view path);
     };
-
-    friend struct node;
-
-    router(std::shared_ptr<node> _node);
 
     static const char* find_first_of(const char* data, const char* chars);
 
+private:
+    template <bool IsConst>
+    class basic_iterator
+    {
+    private:
+        using node_t = std::conditional_t<IsConst, const node, node>;
+        using ref_t = std::conditional_t<IsConst, const std::optional<value_t>&, std::optional<value_t>&>;
+        using ptr_t = std::conditional_t<IsConst, const std::optional<value_t>*, std::optional<value_t>*>;
+
+    public:
+        basic_iterator();
+        basic_iterator(std::nullptr_t);
+
+        basic_iterator prev() const;
+        basic_iterator next(std::string_view path, const on_path_param_t& on_path_param = {}) const;
+
+        std::size_t child_count() const;
+        std::vector<std::string> children() const;
+
+        ref_t operator*() const;
+        ptr_t operator->() const;
+
+        explicit operator bool() const;
+
+        bool operator==(const basic_iterator& other) const;
+        bool operator!=(const basic_iterator& other) const;
+
+    private:
+        friend class router<T>;
+        basic_iterator(std::shared_ptr<node_t> _node);
+
+    private:
+        std::shared_ptr<node_t> _node;
+    };
+
 public:
-    router();
-
-    bool add(std::string_view method, std::string_view path, const handler& h);
-    bool remove(std::string_view method, std::string_view path);
-
-    template <typename OnPathParamT = void(*)(const std::string&, const std::string&)>
-    handler route(std::string_view method, std::string_view path, const OnPathParamT& on_path_param = [](const std::string&, const std::string&){}) const;
-
-    bool contains(std::string_view method, std::string_view path) const;
-
-    bool mount(std::string_view path, const router& r);
-    router unmount(std::string_view path);
-
-    void clear();
-    bool empty() const ;
-
-    operator bool() const ;
-
-public:
-    void get(std::string_view path, const handler& h);
-    void post(std::string_view path, const handler& h);
-    void put(std::string_view path, const handler& h);
-    void patch(std::string_view path, const handler& h);
-    void head(std::string_view path, const handler& h);
+    using iterator = basic_iterator<false>;
+    using const_iterator = basic_iterator<true>;
 
 private:
-    std::shared_ptr<node> _node;
-    std::unordered_map<std::string, handler> _fallbacks{};
+    router(std::shared_ptr<node> root);
+
+public:
+    router();
+    router(iterator it);
+
+    iterator insert(std::string_view path);
+
+    iterator find(std::string_view path, const on_path_param_t& on_path_param = {});
+    const_iterator find(std::string_view path, const on_path_param_t& on_path_param = {}) const;
+
+    iterator insert(std::string_view path, iterator other);
+    iterator remove(std::string_view path);
+
+    iterator root();
+    const_iterator root() const;
+
+    bool contains(std::string_view path) const;
+
+    void clear();
+    bool empty() const;
+    explicit operator bool() const;
+
+private:
+    std::shared_ptr<node> _root;
 };
 
-
-template <typename HandlerT>
-router<HandlerT>::segment::segment() = default;
-
-template <typename HandlerT>
-router<HandlerT>::segment::segment(std::string_view text)
-    : text{text}
-{
-    if (text.size() >= 1 && text.front() == '{' && text.back() == '}')
-    {
-        type = type::parameter;
-        const char* begin = text.data() + 1;
-        const char* end = find_first_of(begin, ":}");
-        if (end > begin)
-            param = std::string(begin, end - begin);
-        if (*end == ':')
-        {
-            begin = end + 1;
-            end = find_first_of(begin, "}");
-            if (end > begin)
-                regex = std::string(begin, end - begin);
-        }
-    }
-    else if (text.size() >= 1 && text.front() == '*')
-    {
-        type = type::wildcard;
-        param = text.data() + 1;
-    }
-    else if (!text.empty())
-        type = type::literal;
-}
-
-template <typename HandlerT>
-router<HandlerT>::segment::segment(const char* data, std::size_t size)
-    : segment(std::string_view(data, size))
+template <typename T>
+router<T>::node::node(std::weak_ptr<node> parent)
+    : _parent{parent}
 {}
 
-template <typename HandlerT>
-router<HandlerT>::router()  = default;
-
-template <typename HandlerT>
-bool router<HandlerT>::node::add(std::string_view method, std::string_view path, const handler& h)
+template <typename T>
+std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path)
 {
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/")
+    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* end = find_first_of(begin, "/?");
+    std::string next_word(begin, end - begin);
+
+    auto it = _children.find(next_word);
+
+    if (it == std::end(_children))
+        it = _children.emplace(next_word, std::make_shared<node>(std::enable_shared_from_this<node>::weak_from_this())).first;
+
+    if (*end == 0 || *end == '?')
+        return it->second;
+
+    return it->second->insert(end);
+}
+
+template <typename T>
+std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param)
+{
+    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* end = find_first_of(begin, "/?");
+    std::string next_word(begin, end - begin);
+
+    auto it = _children.find(next_word);
+
+    if (it == std::end(_children))
     {
-        handlers[method.data()] = h;
-        return true;
+        it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; });
+        if (it != std::end(_children))
+        {
+            std::string_view param(it->first.data() + 1, it->first.size() - 1);
+            if (!param.empty() && on_path_param)
+                on_path_param(param, next_word);
+        }
+    }
+
+    if (it == std::end(_children))
+    {
+        it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
+        if (it != std::end(_children) && it->second->_value)
+        {
+            const char* end = find_first_of(begin, "?");
+            std::string_view param(it->first.data() + 1, it->first.size() - 1);
+            if (!param.empty() && on_path_param)
+                on_path_param(param, std::string_view(begin, end - begin));
+        }
     }
     
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return true;
-    std::string key(begin, end - begin);
+    if (it == std::end(_children))
+        return {};
 
-    auto it = children.find(key);
-    if (it == std::end(children))
-        it = children.emplace(key, std::make_shared<node>(key)).first;
+    if (*end == 0 || *end == '?')
+        return it->second;
 
-    return it->second->add(method, end, h);
+    auto _node = it->second->find(end, on_path_param);
+    if (_node)
+        return _node;
+
+    it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
+    if (it != std::end(_children) && it->second->_value)
+    {
+        const char* end = find_first_of(begin, "?");
+        std::string_view param(it->first.data() + 1, it->first.size() - 1);
+        if (!param.empty() && on_path_param)
+            on_path_param(param, std::string_view(begin, end - begin));
+        return it->second;
+    }
+    return {};
 }
 
-template <typename HandlerT>
-bool router<HandlerT>::node::remove(std::string_view method, std::string_view path)
+template <typename T>
+std::shared_ptr<const typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param) const
 {
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/")
-        return handlers.erase(method.data());
+    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* end = find_first_of(begin, "/?");
+    std::string next_word(begin, end - begin);
 
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return false;
-    std::string key(begin, end - begin);
+    auto it = _children.find(next_word);
 
-    auto it = children.find(key);
-    if (it == std::end(children))
-        return false;
-
-    return it->second->remove(method, end);
-}
-
-template <typename HandlerT>
-template <typename OnPathParamT>
-typename router<HandlerT>::handler router<HandlerT>::node::route(std::string_view method, std::string_view path, const OnPathParamT& on_path_param)
-{
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/" || seg.type == segment::type::wildcard)
+    if (it == std::end(_children))
     {
-        auto it = handlers.find(method.data());
-        if (it != std::end(handlers))
-            return it->second;
-        return {};
+        it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; });
+        if (it != std::end(_children))
+        {
+            std::string_view param(it->first.data() + 1, it->first.size() - 1);
+            if (!param.empty() && on_path_param)
+                on_path_param(param, next_word);
+        }
     }
 
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return {};
-    std::string key(begin, end - begin);
-
-    auto it = children.find(key);
-
-    std::vector<decltype(it)> param_children;
-    if (it == std::end(children))
+    if (it == std::end(_children))
     {
-        // search for parameterized children
-        for (auto it = std::begin(children); it != std::end(children); ++it)
+        it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
+        if (it != std::end(_children) && it->second->_value)
         {
-            const auto& seg = it->second->seg;
-            if (seg.type == segment::type::parameter &&
-               (seg.regex.empty() || std::regex_match(key, std::regex(seg.regex.data()))
-            ))
-                param_children.push_back(it);
-            if (param_children.size() > 1)
-                break;
-        }
-        if (param_children.size() == 1)
-        {
-            const auto& seg = param_children[0]->second->seg;
-            if (!seg.param.empty())
-                on_path_param(seg.param, key);
-            it = param_children[0];
-        }
-        else if (param_children.size() > 1)
-            return {};
-    }
-
-    if (it == std::end(children))
-    {
-        // search for wildcard children
-        for (auto it = std::begin(children); it != std::end(children); ++it)
-        {
-            const auto& seg = it->second->seg;
-            if (seg.type == segment::type::wildcard)
-                param_children.push_back(it);
-            if (param_children.size() > 1)
-                break;
-        }
-        if (param_children.size() == 1)
-        {
-            const auto& seg = param_children[0]->second->seg;
             const char* end = find_first_of(begin, "?");
-            if (!seg.param.empty())
-                on_path_param(seg.param, std::string(begin, end - begin));
-            it = param_children[0];
+            std::string_view param(it->first.data() + 1, it->first.size() - 1);
+            if (!param.empty() && on_path_param)
+                on_path_param(param, std::string_view(begin, end - begin));
         }
-        else
-            return {};
     }
+    
+    if (it == std::end(_children))
+        return {};
 
-    return it->second->route(method, end, on_path_param);
-}
+    if (*end == 0 || *end == '?')
+        return it->second;
 
+    auto _node = it->second->find(end, on_path_param);
+    if (_node)
+        return _node;
 
-template <typename HandlerT>
-bool router<HandlerT>::node::contains(std::string_view method, std::string_view path) const
-{
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/")
-        return handlers.find(method.data()) != std::end(handlers);
-
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return false;
-    std::string seg(begin, end - begin);
-
-    auto it = children.find(seg);
-    if (it == std::end(children))
-        return false;
-
-    return it->second->contains(method, end);
-}
-
-template <typename HandlerT>
-bool router<HandlerT>::node::mount(std::string_view path, router r)
-{
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/")
-        return false;
-
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return false;
-    std::string seg(begin, end - begin);
-
-    auto it = children.find(seg);
-    if (it == std::end(children))
+    it = std::find_if(std::begin(_children), std::end(_children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
+    if (it != std::end(_children) && it->second->_value)
     {
-        if (*end == 0 || *end == '?')
-        {
-            children[seg] = r._node;
-            return true;
-        }
-        else
-            children[seg] = std::make_shared<node>();
+        const char* end = find_first_of(begin, "?");
+        std::string_view param(it->first.data() + 1, it->first.size() - 1);
+        if (!param.empty() && on_path_param)
+            on_path_param(param, std::string_view(begin, end - begin));
+        return it->second;
     }
-
-    return it->second->mount(end, r);
+    return {};
 }
 
-template <typename HandlerT>
-router<HandlerT> router<HandlerT>::node::unmount(std::string_view path)
+template <typename T>
+std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path, std::shared_ptr<node> other)
 {
-    const char* begin = path.data();
-    if (*begin == 0 || *begin == '?' || path == "/")
-        return {};
+    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* end = find_first_of(begin, "/?");
+    std::string next_word(begin, end - begin);
 
-    const char* end = find_first_of(++begin, "/?");
-    if (begin >= end)
-        return {};
-    std::string seg(begin, end - begin);
+    auto it = _children.find(next_word);
 
-    auto it = children.find(seg);
-    if (it == std::end(children))
-        return {};
+    if (it == std::end(_children))
+        it = _children.emplace(next_word, std::make_shared<node>(std::enable_shared_from_this<node>::weak_from_this())).first;
     
     if (*end == 0 || *end == '?')
-    {
-        auto r = router(std::move(it->second));
-        children.erase(it);
-        return r;
-    }
+        return std::exchange(it->second, other);
 
-    return it->second->unmount(end);
+    return it->second->insert(end, other);
 }
 
-template <typename HandlerT>
-router<HandlerT>::router(std::shared_ptr<node> _node) : _node{_node} {}
+template <typename T>
+std::shared_ptr<typename router<T>::node> router<T>::node::remove(std::string_view path)
+{
+    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* end = find_first_of(begin, "/?");
+    std::string next_word(begin, end - begin);
 
-template <typename HandlerT>
-const char* router<HandlerT>::find_first_of(const char* data, const char* chars)
+    auto it = _children.find(next_word);
+
+    if (it == std::end(_children))
+        return {};
+
+    if (*end == 0 || *end == '?')
+    {
+        auto tmp = it->second;
+        _children.erase(it);
+        return tmp;
+    }
+
+    return it->second->remove(end);
+}
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst>::basic_iterator() = default;
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst>::basic_iterator(std::nullptr_t) : basic_iterator() {}
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst> router<T>::basic_iterator<IsConst>::basic_iterator::prev() const
+{
+    if (!_node)
+        return {};
+    return _node->_parent.lock();
+}
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst> router<T>::basic_iterator<IsConst>::next(std::string_view path, const on_path_param_t& on_path_param) const
+{
+    if (!_node)
+        return {};
+    return _node->find(path, on_path_param);
+}
+
+template <typename T>
+template <bool IsConst>
+std::size_t router<T>::basic_iterator<IsConst>::child_count() const
+{
+    if (!_node)
+        return 0;
+    return _node->_children.size();
+}
+
+template <typename T>
+template <bool IsConst>
+std::vector<std::string> router<T>::basic_iterator<IsConst>::children() const
+{
+    if (!_node)
+        return {};
+    std::vector<std::string> _children(child_count());
+    std::transform(std::cbegin(_node->_children), std::cend(_node->_children), std::back_inserter(_children),
+        [](const auto& kv) { return kv.first; }
+    );
+    return _children;
+}
+
+template <typename T>
+template <bool IsConst>
+typename router<T>::basic_iterator<IsConst>::ref_t router<T>::basic_iterator<IsConst>::operator*() const
+{
+    return _node->_value;
+}
+
+template <typename T>
+template <bool IsConst>
+typename router<T>::basic_iterator<IsConst>::ptr_t router<T>::basic_iterator<IsConst>::operator->() const
+{
+    return &_node->_value;
+}
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst>::operator bool() const
+{
+    return _node != nullptr;
+}
+
+template <typename T>
+template <bool IsConst>
+bool router<T>::basic_iterator<IsConst>::operator==(const basic_iterator& other) const
+{
+    return _node == other._node;
+}
+
+template <typename T>
+template <bool IsConst>
+bool router<T>::basic_iterator<IsConst>::operator!=(const basic_iterator& other) const
+{
+    return !(*this == other);
+}
+
+template <typename T>
+template <bool IsConst>
+router<T>::basic_iterator<IsConst>::basic_iterator(std::shared_ptr<node_t> _node) : _node{_node} {}
+
+template <typename T>
+const char* router<T>::find_first_of(const char* data, const char* chars)
 {
     for (; *data; ++data)
         for (const char* ch = chars; *ch; ++ch)
@@ -326,122 +380,99 @@ const char* router<HandlerT>::find_first_of(const char* data, const char* chars)
     return data;
 }
 
-template <typename HandlerT>
-bool router<HandlerT>::add(std::string_view method, std::string_view path, const handler& h)
+template <typename T>
+router<T>::router(std::shared_ptr<node> root) : _root{root} {}
+
+template <typename T>
+router<T>::router() = default;
+
+template <typename T>
+router<T>::router(iterator it) : _root{it._node} {}
+
+template <typename T>
+typename router<T>::iterator router<T>::insert(std::string_view path)
 {
-    if (path.empty() || path[0] != '/')
-        return false;
-    
     if (empty())
-        _node = std::make_shared<node>();
-
-    return _node->add(method, path, h);
-}
-
-template <typename HandlerT>
-bool router<HandlerT>::remove(std::string_view method, std::string_view path)
-{
-    if (empty() || path.empty() || path[0] != '/')
-        return false;
-    
-    return _node->remove(method, path);
-}
-
-template <typename HandlerT>
-template <typename OnPathParamT>
-typename router<HandlerT>::handler router<HandlerT>::route(std::string_view method, std::string_view path, const OnPathParamT& on_path_param) const
-{
-    if (empty() || path.empty() || path[0] != '/')
-        return {};
-
-    return _node->route(method, path, on_path_param);
-}
-
-template <typename HandlerT>
-bool router<HandlerT>::contains(std::string_view method, std::string_view path) const
-{
-    if (empty() || path.empty() || path[0] != '/')
-        return false;
-
-    return _node->contains(method, path);
-}
-
-template <typename HandlerT>
-bool router<HandlerT>::mount(std::string_view path, const router& r)
-{
-    if (path.empty() || path[0] != '/')
-        return false;
-
+        _root = std::make_shared<node>();
     if (path == "/")
-    {
-        _node = r._node;
-        return true;
-    }
+        return _root;
+    return _root->insert(path);
+}
 
+template <typename T>
+typename router<T>::iterator router<T>::find(std::string_view path, const on_path_param_t& on_path_param)
+{
     if (empty())
-        _node = std::make_shared<node>();
-        
-    return _node->mount(path, r);
-}
-
-template <typename HandlerT>
-router<HandlerT> router<HandlerT>::unmount(std::string_view path)
-{
-    if (empty() || path.empty() || path[0] != '/')
         return {};
-
     if (path == "/")
-        return router(std::move(_node));
-
-    return _node->unmount(path);
+        return _root;
+    return _root->find(path, on_path_param);
 }
 
-template <typename HandlerT>
-void router<HandlerT>::clear()
+template <typename T>
+typename router<T>::const_iterator router<T>::find(std::string_view path, const on_path_param_t& on_path_param) const
 {
-    _node = {};
+    if (empty())
+        return {};
+    if (path == "/")
+        return std::shared_ptr<const node>(_root);
+    return std::shared_ptr<const node>(_root)->find(path, on_path_param);
 }
 
-template <typename HandlerT>
-bool router<HandlerT>::empty() const 
+template <typename T>
+typename router<T>::iterator router<T>::insert(std::string_view path, iterator other)
 {
-    return !_node;
+    if (path == "/")
+        return std::exchange(_root, other._node);
+    if (empty())
+        _root = std::make_shared<node>();
+    return _root->insert(path, other._node);
 }
 
-template <typename HandlerT>
-router<HandlerT>::operator bool() const 
+template <typename T>
+typename router<T>::iterator router<T>::remove(std::string_view path)
+{
+    if (path == "/")
+        return std::exchange(_root, {});
+    if (empty())
+        return {};
+    return _root->remove(path);
+}
+
+template <typename T>
+typename router<T>::iterator router<T>::root()
+{
+    return _root;
+}
+
+template <typename T>
+typename router<T>::const_iterator router<T>::root() const
+{
+    return _root;
+}
+
+template <typename T>
+bool router<T>::contains(std::string_view path) const
+{
+    return find(path) != nullptr;
+}
+
+template <typename T>
+void router<T>::clear()
+{
+    _root = {};
+}
+
+template <typename T>
+bool router<T>::empty() const 
+{
+    return !_root;
+}
+
+template <typename T>
+router<T>::operator bool() const 
 {
     return !empty();
-}
-
-template <typename HandlerT>
-void router<HandlerT>::get(std::string_view path, const handler& h)
-{
-    add("GET", path, h);
-}
-
-template <typename HandlerT>
-void router<HandlerT>::post(std::string_view path, const handler& h)
-{
-    add("POST", path, h);
-}
-
-template <typename HandlerT>
-void router<HandlerT>::put(std::string_view path, const handler& h)
-{
-    add("PUT", path, h);
-}
-
-template <typename HandlerT>
-void router<HandlerT>::patch(std::string_view path, const handler& h)
-{
-    add("PATCH", path, h);
-}
-
-template <typename HandlerT>
-void router<HandlerT>::head(std::string_view path, const handler& h)
-{
-    add("HEAD", path, h);
 }
 
 }
