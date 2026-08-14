@@ -10,10 +10,10 @@ TEST(RouterTest, AddRootHandler)
 {
     router<std::string> r;
 
-    *r.insert("/") = "handler";
+    r.at("/") = "handler";
 
     std::string handler;
-    handler = **r.find("/");
+    handler = *r.at("/");
 
     EXPECT_EQ(handler, "handler");
 }
@@ -24,10 +24,10 @@ TEST(RouterTest, AddHandler)
 {
     router<std::string> r;
 
-    *r.insert("/home") = "handler";
+    r.at("/home") = "handler";
 
     std::string handler;
-    handler = **r.find("/home");
+    handler = *r.at("/home");
 
     EXPECT_EQ(handler, "handler");
 }
@@ -36,11 +36,11 @@ TEST(RouterTest, ContainsRootHandler)
 {
     router<std::string> r;
 
-    *r.insert("/") = "handler";
+    r.at("/") = "handler";
 
     EXPECT_TRUE(r.contains("/"));
 
-    r.remove("/");
+    r.unmount("/");
 
     EXPECT_FALSE(r.contains("/"));
 }
@@ -51,11 +51,11 @@ TEST(RouterTest, ContainsHandler)
 {
     router<std::string> r;
 
-    *r.insert("/home") = "handler";
+    r.at("/home") = "handler";
 
     EXPECT_TRUE(r.contains("/home"));
 
-    r.remove("/home");
+    r.unmount("/home");
 
     EXPECT_FALSE(r.contains("/home"));
 }
@@ -67,12 +67,12 @@ TEST(RouterTest, MountRoot)
     router<std::string> r;
     router<std::string> m;
     
-    *m.insert("/home") = "handler";
+    m.at("/home") = "handler";
 
-    auto res = r.insert("/", m.root());
+    auto res = r.mount("/", m);
 
     std::string handler;
-    handler = **r.find("/home");
+    handler = *r.at("/home");
 
     EXPECT_EQ(handler, "handler");
 }
@@ -84,16 +84,16 @@ TEST(RouterTest, Mount)
 {
     router<std::string> r;
 
-    *r.insert("/home") = "handler";
+    r.at("/home") = "handler";
 
     router<std::string> m;
     
-    *m.insert("/") = "auth";
+    m.at("/") = "auth";
 
-    auto res = r.insert("/home/auth", m.root());
+    auto res = r.mount("/home/auth", m);
 
     std::string handler;
-    handler = **r.find("/home/auth");
+    handler = *r.at("/home/auth");
 
     EXPECT_EQ(handler, "auth");
 }
@@ -104,16 +104,15 @@ TEST(RouterTest, UnmountRoot)
 {
     router<std::string> r;
 
-    *r.insert("/") = "handler";
+    r.at("/") = "handler";
 
-    router<std::string> m = r.remove("/");
+    router<std::string> m = r.unmount("/");
 
     std::string handler;
 
-    auto it = r.find("/");
-    EXPECT_EQ(it, nullptr);
+    EXPECT_FALSE(r.contains("/"));
 
-    handler = **m.find("/");
+    handler = *m.at("/");
     EXPECT_EQ(handler, "handler");
 }
 
@@ -123,55 +122,54 @@ TEST(RouterTest, Unmount)
 {
     router<std::string> r;
 
-    *r.insert("/home") = "handler";
+    r.at("/home") = "handler";
 
-    router<std::string> m = r.remove("/home");
+    router<std::string> m = r.unmount("/home");
 
     std::string handler;
 
-    auto it = r.find("/home");
-    EXPECT_EQ(it, nullptr);
+    EXPECT_FALSE(r.contains("/home"));
 
-    handler = **m.find("/");
+    handler = *m.at("/");
     EXPECT_EQ(handler, "handler");
 }
 
 
-TEST(RouterTest, Goddamn)
+TEST(RouterTest, UseCase)
 {
     router<std::string> api;
 
-    *api.insert("/service/auth/test") = "TEST";
-    *api.insert("/service/auth") = "ROOT";
+    api.at("/service/auth/test") = "TEST";
+    api.at("/service/auth") = "ROOT";
 
     router<std::string> auth;
 
-    *auth.insert("/") = "AUTH";
-    *auth.insert("/login") = "AUTH_LOGIN";
-    *auth.insert("/register") = "AUTH_REGISTER";
+    auth.at("/") = "AUTH";
+    auth.at("/login") = "AUTH_LOGIN";
+    auth.at("/register") = "AUTH_REGISTER";
 
-    router<std::string> r = api.insert("/service/auth", auth.root());
+    router<std::string> r = api.mount("/service/auth", auth);
 
     std::string handler;
 
     handler = "";
-    handler = **api.find("/service/auth");
+    handler = *api.at("/service/auth");
     EXPECT_EQ(handler, "AUTH");
 
     handler = "";
-    handler = **api.find("/service/auth/login");
+    handler = *api.at("/service/auth/login");
     EXPECT_EQ(handler, "AUTH_LOGIN");
 
     handler = "";
-    handler = **api.find("/service/auth/register");
+    handler = *api.at("/service/auth/register");
     EXPECT_EQ(handler, "AUTH_REGISTER");
 
     handler = "";
-    handler = **r.find("/");
+    handler = *r.at("/");
     EXPECT_EQ(handler, "ROOT");
 
     handler = "";
-    handler = **r.find("/test");
+    handler = *r.at("/test");
     EXPECT_EQ(handler, "TEST");
 }
 
@@ -179,7 +177,7 @@ TEST(RouterTest, PathParams)
 {
     router<std::string> r;
 
-    *r.insert("/home/:user_id/smth") = "handler";
+    r.at("/home/:user_id/smth") = "handler";
 
     std::string handler;
 
@@ -188,7 +186,7 @@ TEST(RouterTest, PathParams)
     {
         user_id = {std::string(key), std::string(value)};
     };
-    handler = **r.find("/home/42/smth", on_path_param);
+    handler = *r.at("/home/42/smth", on_path_param);
     EXPECT_EQ(handler, "handler");
     EXPECT_EQ(user_id.first, "user_id");
     EXPECT_EQ(user_id.second, "42");
@@ -200,7 +198,7 @@ TEST(RouterTest, ManyPathParams)
 {
     router<std::string> r;
 
-    *r.insert("/a/b/c/:param1/d/:param2") = "handler";
+    r.at("/a/b/c/:param1/d/:param2") = "handler";
 
     std::string handler;
 
@@ -211,11 +209,52 @@ TEST(RouterTest, ManyPathParams)
         path_params[std::string(key)] = std::string(value);
     };
     
-    handler = **r.find("/a/b/c/37/d/42", on_path_param);
+    handler = *r.at("/a/b/c/37/d/42", on_path_param);
     EXPECT_EQ(handler, "handler");
     EXPECT_EQ(path_params.size(), 2);
     EXPECT_EQ(path_params["param1"], "37");
     EXPECT_EQ(path_params["param2"], "42");
+}
+
+TEST(RouterTest, Ambiguous)
+{
+    router<std::string> r;
+
+    r.at("/hello/:a/world") = "handler1";
+    r.at("/hello/:b/world/:c") = "handler2";
+    r.at("/hello/:d/world/:e/:f") = "handler3";
+
+    std::string handler;
+
+    std::unordered_map<std::string, std::string> path_params;
+
+    auto on_path_param = [&path_params](std::string_view key, std::string_view value)
+    {
+        path_params[std::string(key)] = std::string(value);
+    };
+    
+    handler = *r.at("/hello/100/world", on_path_param);
+    EXPECT_EQ(handler, "handler1");
+    EXPECT_EQ(path_params.size(), 1);
+    EXPECT_EQ(path_params["a"], "100");
+
+    handler = "";
+    path_params.clear();
+    handler = *r.at("/hello/200/world/300", on_path_param);
+    EXPECT_EQ(handler, "handler2");
+    EXPECT_EQ(path_params.size(), 2);
+    EXPECT_EQ(path_params["b"], "200");
+    EXPECT_EQ(path_params["c"], "300");
+
+
+    handler = "";
+    path_params.clear();
+    handler = *r.at("/hello/400/world/500/600", on_path_param);
+    EXPECT_EQ(handler, "handler3");
+    EXPECT_EQ(path_params.size(), 3);
+    EXPECT_EQ(path_params["d"], "400");
+    EXPECT_EQ(path_params["e"], "500");
+    EXPECT_EQ(path_params["f"], "600");
 }
 
 
@@ -224,7 +263,7 @@ TEST(RouterTest, Wildcard)
 {
     router<std::string> r;
 
-    *r.insert("/home/*wildcard?") = "handler";
+    r.at("/home/*wildcard?") = "handler";
 
     std::string handler;
 
@@ -233,7 +272,7 @@ TEST(RouterTest, Wildcard)
     {
         wildcard = {std::string(key), std::string(value)};
     };
-    handler = **r.find("/home/long/path/to/smth", on_path_param);
+    handler = *r.at("/home/long/path/to/smth", on_path_param);
     EXPECT_EQ(handler, "handler");
     EXPECT_EQ(wildcard.first, "wildcard");
     EXPECT_EQ(wildcard.second, "long/path/to/smth");
@@ -245,7 +284,7 @@ TEST(RouterTest, WildcardRoot)
 {
     router<std::string> r;
 
-    *r.insert("/*wildcard") = "handler";
+    r.at("/*wildcard") = "handler";
 
     std::string handler;
 
@@ -254,7 +293,7 @@ TEST(RouterTest, WildcardRoot)
     {
         wildcard = {std::string(key), std::string(value)};
     };
-    handler = **r.find("/home/long/path/to/smth", on_path_param);
+    handler = *r.at("/home/long/path/to/smth", on_path_param);
     EXPECT_EQ(handler, "handler");
     EXPECT_EQ(wildcard.first, "wildcard");
     EXPECT_EQ(wildcard.second, "home/long/path/to/smth");
@@ -264,8 +303,8 @@ TEST(RouterTest, WildcardBetween)
 {
     router<std::string> r;
 
-    *r.insert("/hello/world") = "Hello, World!";
-    *r.insert("/hello/*wildcard") = "handler";
+    r.at("/hello/world") = "Hello, World!";
+    r.at("/hello/*wildcard") = "handler";
 
     std::string handler;
 
@@ -274,7 +313,7 @@ TEST(RouterTest, WildcardBetween)
     {
         wildcard = {std::string(key), std::string(value)};
     };
-    handler = **r.find("/hello/world/long/path/to/smth", on_path_param);
+    handler = *r.at("/hello/world/long/path/to/smth", on_path_param);
     EXPECT_EQ(handler, "handler");
     EXPECT_EQ(wildcard.first, "wildcard");
     EXPECT_EQ(wildcard.second, "world/long/path/to/smth");
