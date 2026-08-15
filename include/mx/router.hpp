@@ -304,7 +304,7 @@ typename router<T>::const_iterator router<T>::find(std::string_view path, const 
 {
     if (empty())
         return {};
-    if (path == "/" && root->value)
+    if (path == "/" && _root->value)
         return std::shared_ptr<const node>(_root);
     return std::shared_ptr<const node>(_root)->find(path, on_path_param);
 }
