@@ -20,7 +20,7 @@ public:
     using on_path_param_t = std::function<void(std::string_view, std::string_view)>;
 
 private:
-    struct node
+    struct node : std::enable_shared_from_this<node>
     {
         std::optional<value_t> value;
         std::unordered_map<std::string, std::shared_ptr<node>> children;
@@ -106,13 +106,13 @@ std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_vi
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
+    if (*begin == 0 || *begin == '?')
+        return std::enable_shared_from_this<node>::shared_from_this();
+
     auto it = children.find(next_word);
 
     if (it == std::end(children))
         it = children.emplace(next_word, std::make_shared<node>()).first;
-
-    if (*end == 0 || *end == '?')
-        return it->second;
 
     return it->second->insert(end);
 }
@@ -124,16 +124,17 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
+    if (*begin == 0 || *begin == '?')
+    {
+        if (value)
+            return std::enable_shared_from_this<node>::shared_from_this();
+        return {};
+    }
+
     auto it = children.find(next_word);
 
     if (it != std::end(children))
     {
-        if (*end == 0 || *end == '?')
-        {
-            if (!it->second->value)
-                return {};
-            return it->second;
-        }
         auto _node = it->second->find(end, on_path_param);
         if (_node)
             return _node;
@@ -142,16 +143,6 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
     it = std::begin(children);
     for (it = std::find_if(it, std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; }); it != std::end(children); ++it)
     {
-        if (*end == 0 || *end == '?')
-        {
-            if (!it->second->value)
-                return {};
-            std::string_view param(it->first.data() + 1, it->first.size() - 1);
-            if (!param.empty() && on_path_param)
-                on_path_param(param, next_word);
-            return it->second;
-        }
-
         auto _node = it->second->find(end, on_path_param);
         if (_node)
         {
@@ -163,13 +154,16 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
     }
 
     it = std::find_if(std::begin(children), std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
-    if (it == std::end(children) || !it->second->value)
-        return {};
-    end = find_first_of(begin, "?");
-    std::string_view param(it->first.data() + 1, it->first.size() - 1);
-    if (!param.empty() && on_path_param)
-        on_path_param(param, std::string_view(begin, end - begin));
-    return it->second;
+    if (it != std::end(children))
+    {
+        end = find_first_of(begin, "?");
+        std::string_view param(it->first.data() + 1, it->first.size() - 1);
+        if (!param.empty() && on_path_param)
+            on_path_param(param, std::string_view(begin, end - begin));
+        return it->second;
+    }
+    
+    return {};
 }
 
 template <typename T>
@@ -293,8 +287,6 @@ typename router<T>::iterator router<T>::insert(std::string_view path)
 {
     if (empty())
         _root = std::make_shared<node>();
-    if (path == "/")
-        return _root;
     return _root->insert(path);
 }
 
@@ -303,8 +295,6 @@ typename router<T>::iterator router<T>::find(std::string_view path, const on_pat
 {
     if (empty())
         return {};
-    if (path == "/" && _root->value)
-        return _root;
     return _root->find(path, on_path_param);
 }
 
