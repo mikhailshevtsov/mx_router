@@ -59,8 +59,11 @@ private:
         bool operator==(const basic_iterator& other) const;
         bool operator!=(const basic_iterator& other) const;
 
+        operator basic_iterator<true>() const;
+
     private:
         friend class router;
+        friend class basic_iterator<!IsConst>;
         basic_iterator(std::shared_ptr<node_t> _node);
 
     private:
@@ -172,9 +175,8 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
 template <typename T>
 std::shared_ptr<const typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param) const
 {
-    return std::shared_ptr<const node>(const_cast<router*>(this)->find(path, on_path_param));
+    return const_cast<node*>(this)->find(path, on_path_param);
 }
-
 
 template <typename T>
 std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path, std::shared_ptr<node> other)
@@ -261,6 +263,13 @@ bool router<T>::basic_iterator<IsConst>::operator!=(const basic_iterator& other)
 
 template <typename T>
 template <bool IsConst>
+router<T>::basic_iterator<IsConst>::operator basic_iterator<true>() const
+{
+    return std::shared_ptr<const node>(_node);
+}
+
+template <typename T>
+template <bool IsConst>
 router<T>::basic_iterator<IsConst>::basic_iterator(std::shared_ptr<node_t> _node) : _node{_node} {}
 
 template <typename HandlerT>
@@ -302,11 +311,7 @@ typename router<T>::iterator router<T>::find(std::string_view path, const on_pat
 template <typename T>
 typename router<T>::const_iterator router<T>::find(std::string_view path, const on_path_param_t& on_path_param) const
 {
-    if (empty())
-        return {};
-    if (path == "/" && _root->value)
-        return std::shared_ptr<const node>(_root);
-    return std::shared_ptr<const node>(_root)->find(path, on_path_param);
+    return const_cast<router*>(this)->find(path, on_path_param);
 }
 
 template <typename T>
