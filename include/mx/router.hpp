@@ -102,7 +102,7 @@ private:
 template <typename T>
 std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path)
 {
-    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* begin = path.data() + (*path.data() == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -120,7 +120,7 @@ std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_vi
 template <typename T>
 std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param)
 {
-    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* begin = path.data() + (*path.data() == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -140,8 +140,7 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
             return _node;
     }
 
-    it = std::begin(children);
-    for (it = std::find_if(it, std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; }); it != std::end(children); ++it)
+    for (it = std::begin(children); it != std::end(children); it = std::find_if(it, std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; }))
     {
         auto _node = it->second->find(end, on_path_param);
         if (_node)
@@ -151,6 +150,7 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
                 on_path_param(param, next_word);
             return _node;
         }
+        ++it;
     }
 
     it = std::find_if(std::begin(children), std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
@@ -175,7 +175,7 @@ std::shared_ptr<const typename router<T>::node> router<T>::node::find(std::strin
 template <typename T>
 std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path, std::shared_ptr<node> other)
 {
-    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* begin = path.data() + (*path.data() == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -193,7 +193,7 @@ std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_vi
 template <typename T>
 std::shared_ptr<typename router<T>::node> router<T>::node::remove(std::string_view path)
 {
-    const char* begin = path.size() > 0 ? path.data() + 1 : path.data();
+    const char* begin = path.data() + (*path.data() == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
