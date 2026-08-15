@@ -329,8 +329,6 @@ bool router<T>::contains(std::string_view path) const
 {
     if (empty())
         return false;
-    if (path == "/")
-        return _root->value.has_value();
     return _root->find(path) != nullptr;
 }
 
