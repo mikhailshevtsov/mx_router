@@ -25,13 +25,13 @@ private:
         std::optional<value_t> value;
         std::unordered_map<std::string, std::shared_ptr<node>> children;
 
-        std::shared_ptr<node> insert(std::string_view path);
+        std::shared_ptr<node> insert(const char* path);
 
-        std::shared_ptr<node> find(std::string_view path, const on_path_param_t& on_path_param = {});
-        std::shared_ptr<const node> find(std::string_view path, const on_path_param_t& on_path_param = {}) const;
+        std::shared_ptr<node> find(const char* path, const on_path_param_t& on_path_param = {});
+        std::shared_ptr<const node> find(const char* path, const on_path_param_t& on_path_param = {}) const;
 
-        std::shared_ptr<node> insert(std::string_view path, std::shared_ptr<node> other);
-        std::shared_ptr<node> remove(std::string_view path);
+        std::shared_ptr<node> insert(const char* path, std::shared_ptr<node> other);
+        std::shared_ptr<node> remove(const char* path);
     };
 
     router(std::shared_ptr<node> _node);
@@ -100,9 +100,9 @@ private:
 };
 
 template <typename T>
-std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path)
+std::shared_ptr<typename router<T>::node> router<T>::node::insert(const char* path)
 {
-    const char* begin = path.data() + (*path.data() == '/');
+    const char* begin = path + (*path == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -118,9 +118,9 @@ std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_vi
 }
 
 template <typename T>
-std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param)
+std::shared_ptr<typename router<T>::node> router<T>::node::find(const char* path, const on_path_param_t& on_path_param)
 {
-    const char* begin = path.data() + (*path.data() == '/');
+    const char* begin = path + (*path == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -140,7 +140,8 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
             return _node;
     }
 
-    for (it = std::begin(children); it != std::end(children); it = std::find_if(it, std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; }))
+    it = std::find_if(std::begin(children), std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; });
+    while (it != std::end(children))
     {
         auto _node = it->second->find(end, on_path_param);
         if (_node)
@@ -150,7 +151,7 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
                 on_path_param(param, next_word);
             return _node;
         }
-        ++it;
+        it = std::find_if(++it, std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == ':'; });
     }
 
     it = std::find_if(std::begin(children), std::end(children), [](const auto& kv) { return !kv.first.empty() && kv.first[0] == '*'; });
@@ -167,15 +168,15 @@ std::shared_ptr<typename router<T>::node> router<T>::node::find(std::string_view
 }
 
 template <typename T>
-std::shared_ptr<const typename router<T>::node> router<T>::node::find(std::string_view path, const on_path_param_t& on_path_param) const
+std::shared_ptr<const typename router<T>::node> router<T>::node::find(const char* path, const on_path_param_t& on_path_param) const
 {
     return const_cast<node*>(this)->find(path, on_path_param);
 }
 
 template <typename T>
-std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_view path, std::shared_ptr<node> other)
+std::shared_ptr<typename router<T>::node> router<T>::node::insert(const char* path, std::shared_ptr<node> other)
 {
-    const char* begin = path.data() + (*path.data() == '/');
+    const char* begin = path + (*path == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -191,9 +192,9 @@ std::shared_ptr<typename router<T>::node> router<T>::node::insert(std::string_vi
 }
 
 template <typename T>
-std::shared_ptr<typename router<T>::node> router<T>::node::remove(std::string_view path)
+std::shared_ptr<typename router<T>::node> router<T>::node::remove(const char* path)
 {
-    const char* begin = path.data() + (*path.data() == '/');
+    const char* begin = path + (*path == '/');
     const char* end = find_first_of(begin, "/?");
     std::string next_word(begin, end - begin);
 
@@ -287,7 +288,7 @@ typename router<T>::iterator router<T>::insert(std::string_view path)
 {
     if (empty())
         _root = std::make_shared<node>();
-    return _root->insert(path);
+    return _root->insert(path.data());
 }
 
 template <typename T>
@@ -295,7 +296,7 @@ typename router<T>::iterator router<T>::find(std::string_view path, const on_pat
 {
     if (empty())
         return {};
-    return _root->find(path, on_path_param);
+    return _root->find(path.data(), on_path_param);
 }
 
 template <typename T>
@@ -311,7 +312,7 @@ typename router<T>::iterator router<T>::insert(std::string_view path, iterator o
         return std::exchange(_root, other._node);
     if (empty())
         _root = std::make_shared<node>();
-    return _root->insert(path, other._node);
+    return _root->insert(path.data(), other._node);
 }
 
 template <typename T>
@@ -321,15 +322,13 @@ typename router<T>::iterator router<T>::remove(std::string_view path)
         return std::exchange(_root, {});
     if (empty())
         return {};
-    return _root->remove(path);
+    return _root->remove(path.data());
 }
 
 template <typename T>
 bool router<T>::contains(std::string_view path) const
 {
-    if (empty())
-        return false;
-    return _root->find(path) != nullptr;
+    return find(path) != nullptr;
 }
 
 template <typename T>
